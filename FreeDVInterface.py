@@ -1,6 +1,7 @@
 import time
 import threading
 import queue
+from collections import deque
 import numpy as np
 import pyaudio
 from ctypes import *
@@ -10,6 +11,12 @@ from threading import Lock
 import subprocess
 import RNS
 from RNS.Interfaces.Interface import Interface
+
+try:
+    import samplerate
+except ImportError:
+    samplerate = None
+
 
 MODE_DATAC1 = 10
 MODE_DATAC3 = 12
@@ -123,6 +130,8 @@ class FreeDVData:
         self.c_lib.freedv_set_verbose(self.freedv, 0)
 
         self.nin = self.get_freedv_rx_nin()
+        self.modem_sample_rate = self.get_modem_sample_rate()
+
 
     def tx_burst(self, data_in):
         num_frames = math.ceil(len(data_in) / self.payload_bytes_per_modem_frame)
@@ -241,6 +250,13 @@ class AudioBuffer:
         finally:
             self.mutex.release()
 
+    def clear(self):
+        self.mutex.acquire()
+        try:
+            self.nbuffer = 0
+        finally:
+            self.mutex.release()
+
 
 class FreeDVInterface(Interface):
     DEFAULT_IFAC_SIZE = 8
@@ -264,6 +280,17 @@ class FreeDVInterface(Interface):
         self.freedv_mode_str = ifconf["freedv_mode"].lower() if "freedv_mode" in ifconf else "datac1"
         self.tx_volume = float(ifconf.get("tx_volume", 100)) / 100.0
 
+        # audio sample rate settings
+        config_sample_rate = ifconf.get("sample_rate", "8000").strip()
+        self.device_sample_rate = None if config_sample_rate.lower() == "auto" else int(config_sample_rate)
+        sinc_mode_map = {
+            "fastest": "sinc_fastest",
+            "medium": "sinc_medium",
+            "best": "sinc_best",
+        }
+        config_sinc_mode = ifconf.get("samplerate_sinc_mode", "medium").lower().strip()
+        self.samplerate_sinc_mode = sinc_mode_map.get(config_sinc_mode, "sinc_medium")
+
         # PTT configuration
         self.ptt_type = ifconf.get("ptt_type", "none").lower()  # none, serial, hamlib, vox
         self.ptt_enabled = self.ptt_type != "none"
@@ -279,7 +306,7 @@ class FreeDVInterface(Interface):
         self.hamlib_speed = ifconf.get("hamlib_speed", "19200")
         self.hamlib_data_bits = ifconf.get("hamlib_data_bits", "8")
         self.hamlib_stop_bits = ifconf.get("hamlib_stop_bits", "1")
-        self.hamlib_parity = ifconf.get("hamlib_parity", "N").upper()
+        self.hamlib_parity = ifconf.get("hamlib_parity", "None")
         self.hamlib_extra_args = ifconf.get("hamlib_extra_args", "")
         self.hamlib_network = ifconf.get("hamlib_network", "false").lower() == "true"
         self.hamlib_host = ifconf.get("hamlib_host", "localhost")
@@ -336,6 +363,11 @@ class FreeDVInterface(Interface):
         # audio buffers
         self.rx_audio_buffer = AudioBuffer(self.audio_frames_per_buffer * 10000)
         self.tx_audio_buffer = AudioBuffer(self.audio_frames_per_buffer * 10000)
+
+        # modem RX buffering (used for resampling)
+        self._rx_modem_chunks = deque()
+        self._rx_modem_head = 0
+        self._rx_modem_len = 0
 
         self.running = True
         self.tx_thread = None
@@ -466,6 +498,21 @@ class FreeDVInterface(Interface):
     def init_audio(self):
         self.p = pyaudio.PyAudio()
 
+        # get modem sample rate from freedv
+        self.modem_sample_rate = self.freedv.modem_sample_rate
+
+        # handle config sample_rate = auto
+        if self.device_sample_rate is None:
+            device_info = self.p.get_device_info_by_index(self.input_device)
+            self.device_sample_rate = int(device_info["defaultSampleRate"])
+
+        if self.device_sample_rate != self.modem_sample_rate and samplerate is None:
+            raise Exception(
+                "Missing samplerate package required for audio resampling:\n"
+                f"    device sample rate ({self.device_sample_rate}) != modem sample rate ({self.modem_sample_rate})\n"
+                "Try: pip install samplerate"
+            )
+
         if self.debug:
             RNS.log(f"Initializing audio for FreeDV [{self.name}]", RNS.LOG_DEBUG)
             input_info = self.p.get_device_info_by_index(self.input_device)
@@ -473,10 +520,15 @@ class FreeDVInterface(Interface):
             RNS.log(f"Input device: {self.input_device} ({input_info['name']})", RNS.LOG_DEBUG)
             RNS.log(f"Output device: {self.output_device} ({output_info['name']})", RNS.LOG_DEBUG)
 
+            if self.device_sample_rate != self.modem_sample_rate:
+                RNS.log(f"Device sample rate: {self.device_sample_rate} Hz", RNS.LOG_DEBUG)
+                RNS.log(f"Modem sample rate: {self.modem_sample_rate} Hz", RNS.LOG_DEBUG)
+                RNS.log(f"Resampling enabled ({self.samplerate_sinc_mode})", RNS.LOG_DEBUG)
+
         try:
             # Open audio stream
             self.stream = self.p.open(
-                rate=8000,
+                rate=self.device_sample_rate,
                 channels=1,
                 format=pyaudio.paInt16,
                 frames_per_buffer=self.audio_frames_per_buffer,
@@ -510,9 +562,7 @@ class FreeDVInterface(Interface):
                 tx_samples = self.tx_audio_buffer.buffer[:frame_count].copy()
                 self.tx_audio_buffer.pop(frame_count)
 
-                # TODO
-                tx_samples = (tx_samples * self.tx_volume).astype(np.int16)
-                return tx_samples.tobytes(), pyaudio.paContinue
+                return (tx_samples * self.tx_volume).astype(np.int16).tobytes(), pyaudio.paContinue
 
             return b'\x00' * (frame_count * 2), pyaudio.paContinue
 
@@ -740,7 +790,7 @@ class FreeDVInterface(Interface):
                 if self.ptt_type == "vox" and self.vox_tone:
                     # 100ms of 1kHz tone at 8kHz sample rate
                     tone_duration = 0.1
-                    sample_rate = 8000
+                    sample_rate = self.device_sample_rate
                     frequency = 1000
                     t = np.linspace(0, tone_duration, int(sample_rate * tone_duration))
                     tone = (np.sin(2 * np.pi * frequency * t) * 32767 * 0.3).astype(np.int16)
@@ -749,12 +799,27 @@ class FreeDVInterface(Interface):
 
                 tx_audio = self.freedv.tx_burst(packet)
 
-                self.tx_audio_buffer.nbuffer = 0
-                self.tx_audio_buffer.push(np.frombuffer(tx_audio, dtype=np.int16))
+                tx_modem = np.frombuffer(tx_audio, dtype=np.int16)
+
+                if self.device_sample_rate != self.modem_sample_rate:
+                    ratio = self.device_sample_rate / float(self.modem_sample_rate)
+                    tx_device = samplerate.resample(
+                        tx_modem.astype(np.float32),
+                        ratio,
+                        self.samplerate_sinc_mode
+                    ).astype(np.int16)
+                else:
+                    tx_device = tx_modem
+
+                if self.tx_volume != 1.0:
+                    tx_device = np.clip(tx_device.astype(np.float32) * self.tx_volume, -32768, 32767).astype(np.int16)
+
+                self.tx_audio_buffer.clear()
+                self.tx_audio_buffer.push(tx_device)
 
                 # calculate expected time
-                samples_to_tx = len(tx_audio) // 2  # 16-bit samples
-                expected_time = samples_to_tx / 8000.0  # 8kHz sample rate
+                samples_to_tx = len(tx_device)
+                expected_time = samples_to_tx / float(self.device_sample_rate)
 
                 time.sleep(expected_time + 0.5)
 
@@ -784,56 +849,104 @@ class FreeDVInterface(Interface):
     def rx_loop(self):
         while self.running:
             try:
-                # get our samples for demodulation
-                nin = self.freedv.nin
-                samples = self.rx_audio_buffer.get_samples(nin)
+                if self.device_sample_rate == self.modem_sample_rate:
+                    nin = self.freedv.nin
+                    samples = self.rx_audio_buffer.get_samples(nin)
 
-                if samples is not None:
-                    self.rx_audio_buffer.pop(nin)
+                    if samples is not None:
+                        self.rx_audio_buffer.pop(nin)
+                        signal_level = np.sqrt(np.mean(samples.astype(float) ** 2)) / 32768.0
+                        nbytes_out, rx_bytes, sync_state, snr_value = self.freedv.rx(samples.tobytes())
+                        self.update_channel_state(sync_state > 0, signal_level)
 
-                    signal_level = np.sqrt(np.mean(samples.astype(float) ** 2)) / 32768.0
-
-                    nbytes_out, rx_bytes, sync_state, snr_value = self.freedv.rx(samples.tobytes())
-
-                    self.update_channel_state(sync_state > 0, signal_level)
-
-                    if nbytes_out > 0:
-                        if self.debug:
-                            RNS.log(f"FreeDV [{self.name}] raw RX: {nbytes_out} bytes", RNS.LOG_DEBUG)
-
-                        # For FreeDV, we get the full frame including CRC
-                        # The CRC is the last 2 bytes. but FreeDV already validates it
-                        # If were here, the CRC was good, so we can use the payload
-
-                        if len(rx_bytes) >= 2:
-                            # remove the CRC (last 2 bytes)
-                            payload = rx_bytes[:-2]
-
-                            actual_length = len(payload)
-                            while actual_length > 0 and payload[actual_length - 1] == 0:
-                                actual_length -= 1
-
-                            if actual_length > 0:
-                                packet = payload[:actual_length]
-                                self.process_incoming(bytes(packet))
-                                if self.debug:
-                                    RNS.log(f"FreeDV [{self.name}] processed {len(packet)} byte packet",
-                                            RNS.LOG_DEBUG)
-                            elif self.debug:
-                                RNS.log(f"FreeDV [{self.name}] received empty/padding-only frame",
-                                        RNS.LOG_DEBUG)
-                        else:
-                            if self.debug:
-                                RNS.log(f"FreeDV",
-                                        RNS.LOG_DEBUG)
+                        if nbytes_out > 0:
+                            self._process_rx_frame(nbytes_out, rx_bytes)
+                    else:
+                        # no samples available, sleep a bit and update channel state
+                        time.sleep(0.01)
+                        self.update_channel_state(False, self.recent_signal_level * 0.95)
 
                 else:
-                    # no samples available, sleep a bit and update channel state
-                    time.sleep(0.01)
-                    self.update_channel_state(False, self.recent_signal_level * 0.95)
+                    # resampling path - use chunk accumulation
+                    dev_samples = self.rx_audio_buffer.get_samples(self.audio_frames_per_buffer)
+
+                    if dev_samples is None:
+                        time.sleep(0.01)
+                        self.update_channel_state(False, self.recent_signal_level * 0.95)
+                        continue
+
+                    self.rx_audio_buffer.pop(len(dev_samples))
+
+                    # resample device -> modem
+                    ratio = self.modem_sample_rate / float(self.device_sample_rate)
+                    modem_chunk = samplerate.resample(
+                        dev_samples.astype(np.float32),
+                        ratio,
+                        self.samplerate_sinc_mode
+                    ).astype(np.int16)
+
+                    if len(modem_chunk) > 0:
+                        self._rx_modem_chunks.append(modem_chunk)
+                        self._rx_modem_len += len(modem_chunk)
+
+                    # drain nin-sized blocks for demodulation
+                    while self._rx_modem_len >= self.freedv.nin:
+                        nin = self.freedv.nin
+                        out = np.empty(nin, dtype=np.int16)
+                        filled = 0
+
+                        while filled < nin:
+                            head = self._rx_modem_chunks[0]
+                            avail = len(head) - self._rx_modem_head
+                            take = min(nin - filled, avail)
+                            out[filled:filled + take] = head[self._rx_modem_head:self._rx_modem_head + take]
+                            filled += take
+                            self._rx_modem_head += take
+                            self._rx_modem_len -= take
+
+                            if self._rx_modem_head >= len(head):
+                                self._rx_modem_chunks.popleft()
+                                self._rx_modem_head = 0
+
+                        signal_level = np.sqrt(np.mean(out.astype(float) ** 2)) / 32768.0
+
+                        nbytes_out, rx_bytes, sync_state, snr_value = self.freedv.rx(out.tobytes())
+                        self.update_channel_state(sync_state > 0, signal_level)
+
+                        if nbytes_out > 0:
+                            self._process_rx_frame(nbytes_out, rx_bytes)
 
             except Exception as e:
                 RNS.log(f"RX error in FreeDV interface [{self.name}]: {e}", RNS.LOG_ERROR)
+
+    def _process_rx_frame(self, nbytes_out, rx_bytes):
+        """Process a received FreeDV frame"""
+        if self.debug:
+            RNS.log(f"FreeDV [{self.name}] raw RX: {nbytes_out} bytes", RNS.LOG_DEBUG)
+
+        # For FreeDV, we get the full frame including CRC
+        # The CRC is the last 2 bytes. but FreeDV already validates it
+        # If were here, the CRC was good, so we can use the payload
+
+        if len(rx_bytes) >= 2:
+            # remove the CRC (last 2 bytes)
+            payload = rx_bytes[:-2]
+
+            actual_length = len(payload)
+            while actual_length > 0 and payload[actual_length - 1] == 0:
+                actual_length -= 1
+
+            if actual_length > 0:
+                packet = payload[:actual_length]
+                self.process_incoming(bytes(packet))
+                if self.debug:
+                    RNS.log(f"FreeDV [{self.name}] processed {len(packet)} byte packet",
+                            RNS.LOG_DEBUG)
+            elif self.debug:
+                RNS.log(f"FreeDV [{self.name}] received empty/padding-only frame",
+                        RNS.LOG_DEBUG)
+        elif self.debug:
+            RNS.log(f"FreeDV [{self.name}] received short frame", RNS.LOG_DEBUG)
 
     def process_incoming(self, data):
         self.rxb += len(data)
@@ -846,6 +959,7 @@ class FreeDVInterface(Interface):
             max_payload = self.freedv.payload_bytes_per_modem_frame
 
             if len(data) > max_payload:
+                RNS.log(f"FreeDV interface [{self.name}] dropping outbound packet: {len(data)} > {max_payload} bytes", RNS.LOG_ERROR)
                 return
 
             try:
