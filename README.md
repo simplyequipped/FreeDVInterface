@@ -28,11 +28,12 @@ mkdir build_linux
 cd build_linux
 cmake ..
 make
+make install
 ```
 
 2. Install pre-requisites 
 ```
-sudo apt install portaudio19-dev
+sudo apt install portaudio19-dev libsamplerate-dev
 pip install pyaudio OR sudo apt install python-pyaudio 
 pip install numpy OR sudo apt install python-numpy
 
