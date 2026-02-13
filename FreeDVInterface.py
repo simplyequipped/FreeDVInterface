@@ -34,6 +34,7 @@ class FreeDVData:
             f'./lib/{libname}',
             f'~/.reticulum/interfaces/lib/{libname}',
             f'/usr/local/lib/{libname}',
+            f'/usr/local/lib64/{libname}',
             f'/usr/lib/{libname}',
         ]
 
