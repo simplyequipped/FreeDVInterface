@@ -380,6 +380,8 @@ class FreeDVInterface(Interface):
         self.audio_thread = None
         self.monitor_thread = None
 
+        self.rx_resampler = None
+
         # PTT handling
         self.ptt_serial = None
         if self.ptt_type == "serial" and self.ptt_port:
@@ -517,6 +519,9 @@ class FreeDVInterface(Interface):
                 f"    device sample rate ({self.device_sample_rate}) != modem sample rate ({self.modem_sample_rate})\n"
                 "Try: pip install samplerate"
             )
+
+        if self.device_sample_rate != self.modem_sample_rate:
+            self.rx_resampler = samplerate.Resampler(self.samplerate_sinc_mode, channels=1)
 
         if self.debug:
             RNS.log(f"Initializing audio for FreeDV [{self.name}]", RNS.LOG_DEBUG)
@@ -897,10 +902,10 @@ class FreeDVInterface(Interface):
 
                     # resample device -> modem
                     ratio = self.modem_sample_rate / float(self.device_sample_rate)
-                    modem_chunk = samplerate.resample(
+                    modem_chunk = self.rx_resampler.process(
                         dev_samples.astype(np.float32),
                         ratio,
-                        self.samplerate_sinc_mode
+                        end_of_input=False
                     ).astype(np.int16)
 
                     if len(modem_chunk) > 0:
