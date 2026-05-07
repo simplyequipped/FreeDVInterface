@@ -726,11 +726,11 @@ class FreeDVInterface(Interface):
 
             # channel is busy if we have sync OR signal level is above threshold
             if has_sync or (self.recent_signal_level > self.signal_threshold):
-                self.channel_busy = True
-                self.last_sync_time = time.time()
-                if self.debug and (has_sync or self.recent_signal_level > self.signal_threshold):
+                if not self.channel_busy and self.debug:
                     reason = "sync detected" if has_sync else f"signal level {self.recent_signal_level:.3f}"
                     RNS.log(f"{self} channel busy - {reason}", RNS.LOG_DEBUG)
+                self.channel_busy = True
+                self.last_sync_time = time.time()
             else:
                 # channel is considered free if no sync/signal above threshold for timeout period
                 if time.time() - self.last_sync_time > self.channel_busy_timeout:
@@ -838,6 +838,9 @@ class FreeDVInterface(Interface):
                 samples_to_tx = len(tx_device)
                 expected_time = samples_to_tx / float(self.device_sample_rate)
 
+                if self.debug:
+                    RNS.log(f"{self} modem TX: {samples_to_tx} samples ({expected_time:.2f}s)", RNS.LOG_DEBUG)
+
                 time.sleep(expected_time + 0.5)
 
                 # clear any remaining samples
@@ -875,6 +878,9 @@ class FreeDVInterface(Interface):
                         signal_level = np.sqrt(np.mean(samples.astype(float) ** 2)) / 32768.0
                         nbytes_out, rx_bytes, sync_state, snr_value = self.freedv.rx(samples.tobytes())
                         self.update_channel_state(sync_state > 0, signal_level)
+
+                        if self.debug:
+                            RNS.log(f"{self} modem reporting SNR {snr_value:.1f} dB, signal {signal_level:.3f}, sync state {sync_state}", RNS.LOG_EXTREME)
 
                         if nbytes_out > 0:
                             self._process_rx_frame(nbytes_out, rx_bytes)
@@ -929,6 +935,9 @@ class FreeDVInterface(Interface):
 
                         nbytes_out, rx_bytes, sync_state, snr_value = self.freedv.rx(out.tobytes())
                         self.update_channel_state(sync_state > 0, signal_level)
+
+                        if self.debug:
+                            RNS.log(f"{self} modem reporting SNR {snr_value:.1f} dB, signal {signal_level:.3f}, sync state {sync_state}", RNS.LOG_EXTREME)
 
                         if nbytes_out > 0:
                             self._process_rx_frame(nbytes_out, rx_bytes)
