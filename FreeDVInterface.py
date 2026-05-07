@@ -531,6 +531,19 @@ class FreeDVInterface(Interface):
                 RNS.log(f"Resampling enabled ({self.samplerate_sinc_mode})", RNS.LOG_DEBUG)
 
         try:
+            try:
+                self.p.is_format_supported(
+                    rate=self.device_sample_rate,
+                    input_device=self.input_device,
+                    input_channels=1,
+                    input_format=pyaudio.paInt16,
+                    output_device=self.output_device,
+                    output_channels=1,
+                    output_format=pyaudio.paInt16,
+                )
+            except ValueError as e:
+                raise Exception(f"Device does not support {self.device_sample_rate} Hz: {e}. Try sample_rate = auto, or check the device's supported rates.")
+
             # Open audio stream
             self.stream = self.p.open(
                 rate=self.device_sample_rate,
