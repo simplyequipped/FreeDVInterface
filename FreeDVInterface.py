@@ -389,27 +389,27 @@ class FreeDVInterface(Interface):
                 import serial
                 self.ptt_serial = serial.Serial(self.ptt_port)
                 if self.debug:
-                    RNS.log(f"Serial PTT enabled on {self.ptt_port}", RNS.LOG_DEBUG)
+                    RNS.log(f"{self} Serial PTT enabled on {self.ptt_port}", RNS.LOG_DEBUG)
             except Exception as e:
-                RNS.log(f"Could not open PTT port {self.ptt_port}: {e}", RNS.LOG_ERROR)
+                RNS.log(f"{self} could not open PTT port {self.ptt_port}: {e}", RNS.LOG_ERROR)
                 self.ptt_enabled = False
         elif self.ptt_type == "hamlib":
             # Check if rigctl exists
             try:
                 subprocess.run([self.hamlib_rigctl, "-V"], capture_output=True, timeout=2)
             except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-                RNS.log(f"rigctl not found or not working: {e}", RNS.LOG_ERROR)
+                RNS.log(f"{self} rigctl not found or not working: {e}", RNS.LOG_ERROR)
                 self.ptt_enabled = False
                 return
 
             # Test hamlib connection
             if self.test_hamlib():
-                RNS.log(f"Hamlib PTT enabled - Model: {self.hamlib_model}, Device: {self.hamlib_device}", RNS.LOG_INFO)
+                RNS.log(f"{self} Hamlib PTT enabled - Model: {self.hamlib_model}, Device: {self.hamlib_device}", RNS.LOG_INFO)
             else:
-                RNS.log("Hamlib PTT test failed - check configuration", RNS.LOG_ERROR)
+                RNS.log(f"{self} Hamlib PTT test failed - check configuration", RNS.LOG_ERROR)
                 self.ptt_enabled = False
         elif self.ptt_type == "vox":
-            RNS.log(f"VOX PTT enabled with {self.vox_delay}s activation delay", RNS.LOG_INFO)
+            RNS.log(f"{self} VOX PTT enabled with {self.vox_delay}s activation delay", RNS.LOG_INFO)
 
         # start our threads
         try:
@@ -421,7 +421,7 @@ class FreeDVInterface(Interface):
             self.monitor_thread = threading.Thread(target=self.monitor_loop, daemon=True)
             self.monitor_thread.start()
 
-            RNS.log(f"FreeDV Interface [{self.name}] is online using {self.freedv_mode_str.upper()}", RNS.LOG_INFO)
+            RNS.log(f"{self} is online using {self.freedv_mode_str.upper()}", RNS.LOG_INFO)
             RNS.log(f"  MTU: {self.HW_MTU} bytes, Bitrate: ~{self.bitrate} bps", RNS.LOG_INFO)
             if self.debug:
                 RNS.log(f"  Mode: {self.freedv}, Payload/frame: {self.freedv.payload_bytes_per_modem_frame} bytes",
@@ -444,7 +444,7 @@ class FreeDVInterface(Interface):
                 elif self.ptt_type == "vox":
                     RNS.log(f"  PTT: VOX with {self.vox_delay}s delay", RNS.LOG_INFO)
         except Exception as e:
-            RNS.log(f"Could not initialize FreeDV interface [{self.name}]: {e}", RNS.LOG_ERROR)
+            RNS.log(f"Could not initialize {self}: {e}", RNS.LOG_ERROR)
             raise e
 
     def get_device_index(self, device_config, is_input=True):
@@ -481,8 +481,7 @@ class FreeDVInterface(Interface):
         p.terminate()
 
         if device_index is None:
-            RNS.log(f"Could not find audio device '{device_config}' for {'input' if is_input else 'output'}",
-                    RNS.LOG_ERROR)
+            RNS.log(f"{self} could not find audio device '{device_config}' for {'input' if is_input else 'output'}", RNS.LOG_ERROR)
             RNS.log("Available devices:", RNS.LOG_ERROR)
             p = pyaudio.PyAudio()
             for i in range(p.get_device_count()):
@@ -495,9 +494,7 @@ class FreeDVInterface(Interface):
         if self.debug:
             p = pyaudio.PyAudio()
             info = p.get_device_info_by_index(device_index)
-            RNS.log(
-                f"Found {'input' if is_input else 'output'} device '{device_config}' at index {device_index}: {info['name']}",
-                RNS.LOG_DEBUG)
+            RNS.log(f"{self} found {'input' if is_input else 'output'} device '{device_config}' at index {device_index}: {info['name']}", RNS.LOG_DEBUG)
             p.terminate()
 
         return device_index
@@ -524,16 +521,16 @@ class FreeDVInterface(Interface):
             self.rx_resampler = samplerate.Resampler(self.samplerate_sinc_mode, channels=1)
 
         if self.debug:
-            RNS.log(f"Initializing audio for FreeDV [{self.name}]", RNS.LOG_DEBUG)
+            RNS.log(f"{self} initializing audio", RNS.LOG_DEBUG)
             input_info = self.p.get_device_info_by_index(self.input_device)
             output_info = self.p.get_device_info_by_index(self.output_device)
-            RNS.log(f"Input device: {self.input_device} ({input_info['name']})", RNS.LOG_DEBUG)
-            RNS.log(f"Output device: {self.output_device} ({output_info['name']})", RNS.LOG_DEBUG)
+            RNS.log(f"  Input device: {self.input_device} ({input_info['name']})", RNS.LOG_DEBUG)
+            RNS.log(f"  Output device: {self.output_device} ({output_info['name']})", RNS.LOG_DEBUG)
 
             if self.device_sample_rate != self.modem_sample_rate:
-                RNS.log(f"Device sample rate: {self.device_sample_rate} Hz", RNS.LOG_DEBUG)
-                RNS.log(f"Modem sample rate: {self.modem_sample_rate} Hz", RNS.LOG_DEBUG)
-                RNS.log(f"Resampling enabled ({self.samplerate_sinc_mode})", RNS.LOG_DEBUG)
+                RNS.log(f"  Device sample rate: {self.device_sample_rate} Hz", RNS.LOG_DEBUG)
+                RNS.log(f"  Modem sample rate: {self.modem_sample_rate} Hz", RNS.LOG_DEBUG)
+                RNS.log(f"  Resampling enabled ({self.samplerate_sinc_mode})", RNS.LOG_DEBUG)
 
         try:
             try:
@@ -568,10 +565,10 @@ class FreeDVInterface(Interface):
                 raise Exception("Audio stream failed to start - check configuration")
 
             if self.debug:
-                RNS.log(f"Audio stream started  [{self.name}]", RNS.LOG_DEBUG)
+                RNS.log(f"{self} audio stream started", RNS.LOG_DEBUG)
 
         except Exception as e:
-            RNS.log(f"Failed audio | [{self.name}]: {e}", RNS.LOG_ERROR)
+            RNS.log(f"{self} audio stream failed: {e}", RNS.LOG_ERROR)
             raise
 
     def audio_callback(self, in_data, frame_count, time_info, status):
@@ -590,7 +587,7 @@ class FreeDVInterface(Interface):
             return b'\x00' * (frame_count * 2), pyaudio.paContinue
 
         except Exception as e:
-            RNS.log(f"Audio callback error [{self.name}]: {e}", RNS.LOG_ERROR)
+            RNS.log(f"{self} audio callback error: {e}", RNS.LOG_ERROR)
             return b'\x00' * (frame_count * 2), pyaudio.paContinue
 
     def start_threads(self):
@@ -628,17 +625,17 @@ class FreeDVInterface(Interface):
             cmd.append("f")
 
             if self.debug:
-                RNS.log(f"Testing hamlib with command: {' '.join(cmd)}", RNS.LOG_DEBUG)
+                RNS.log(f"{self} testing hamlib with command: {' '.join(cmd)}", RNS.LOG_DEBUG)
 
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
 
             if self.debug and result.returncode != 0:
-                RNS.log(f"Hamlib test output: {result.stderr}", RNS.LOG_DEBUG)
+                RNS.log(f"{self} hamlib test output: {result.stderr}", RNS.LOG_DEBUG)
 
             return result.returncode == 0
         except Exception as e:
             if self.debug:
-                RNS.log(f"Hamlib test failed: {e}", RNS.LOG_ERROR)
+                RNS.log(f"{self} hamlib test failed: {e}", RNS.LOG_ERROR)
             return False
 
     def ptt_on(self):
@@ -662,14 +659,14 @@ class FreeDVInterface(Interface):
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
 
                 if result.returncode != 0 and self.debug:
-                    RNS.log(f"Hamlib PTT ON failed: {result.stderr}", RNS.LOG_ERROR)
+                    RNS.log(f"{self} hamlib PTT ON failed: {result.stderr}", RNS.LOG_ERROR)
 
                 time.sleep(self.ptt_on_delay)
 
                 if self.debug:
-                    RNS.log(f"Hamlib PTT ON", RNS.LOG_DEBUG)
+                    RNS.log(f"{self} hamlib PTT ON", RNS.LOG_DEBUG)
         except Exception as e:
-            RNS.log(f"PTT control error: {e}", RNS.LOG_ERROR)
+            RNS.log(f"{self} PTT control error: {e}", RNS.LOG_ERROR)
 
     def ptt_off(self):
         if not self.ptt_enabled:
@@ -694,12 +691,12 @@ class FreeDVInterface(Interface):
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=2)
 
                 if result.returncode != 0 and self.debug:
-                    RNS.log(f"Hamlib PTT OFF failed: {result.stderr}", RNS.LOG_ERROR)
+                    RNS.log(f"{self} hamlib PTT OFF failed: {result.stderr}", RNS.LOG_ERROR)
 
                 if self.debug:
-                    RNS.log(f"Hamlib PTT OFF", RNS.LOG_DEBUG)
+                    RNS.log(f"{self} hamlib PTT OFF", RNS.LOG_DEBUG)
         except Exception as e:
-            RNS.log(f"PTT control error: {e}", RNS.LOG_ERROR)
+            RNS.log(f"{self} PTT control error: {e}", RNS.LOG_ERROR)
 
     def monitor_loop(self):
         last_log = 0
@@ -707,20 +704,20 @@ class FreeDVInterface(Interface):
             try:
                 now = time.time()
                 if now - last_log > 30 and self.debug:
-                    RNS.log(f"FreeDV [{self.name}] status: TX queue={self.tx_queue.qsize()}, " +
+                    RNS.log(f"{self} status: TX queue={self.tx_queue.qsize()}, " +
                             f"RX buffer={self.rx_audio_buffer.nbuffer}, TX buffer={self.tx_audio_buffer.nbuffer}, " +
                             f"Transmitting={self.is_transmitting}, Channel busy={self.channel_busy}", RNS.LOG_DEBUG)
                     last_log = now
 
                 # check if our audio stream is still active
                 if hasattr(self, 'stream') and self.stream and not self.stream.is_active():
-                    RNS.log(f"Audio stream died on FreeDV [{self.name}], attempting restart", RNS.LOG_ERROR)
+                    RNS.log(f"{self} audio stream died, attempting restart", RNS.LOG_ERROR)
                     self.online = False
                     break
 
                 time.sleep(1)
             except Exception as e:
-                RNS.log(f"Monitor error in FreeDV [{self.name}]: {e}", RNS.LOG_ERROR)
+                RNS.log(f"{self} monitor error: {e}", RNS.LOG_ERROR)
 
     def update_channel_state(self, has_sync, signal_level=None):
         with self.sync_lock:
@@ -733,12 +730,12 @@ class FreeDVInterface(Interface):
                 self.last_sync_time = time.time()
                 if self.debug and (has_sync or self.recent_signal_level > self.signal_threshold):
                     reason = "sync detected" if has_sync else f"signal level {self.recent_signal_level:.3f}"
-                    RNS.log(f"FreeDV [{self.name}] channel busy - {reason}", RNS.LOG_DEBUG)
+                    RNS.log(f"{self} channel busy - {reason}", RNS.LOG_DEBUG)
             else:
                 # channel is considered free if no sync/signal above threshold for timeout period
                 if time.time() - self.last_sync_time > self.channel_busy_timeout:
                     if self.channel_busy and self.debug:
-                        RNS.log(f"FreeDV [{self.name}] channel now clear", RNS.LOG_DEBUG)
+                        RNS.log(f"{self} channel now clear", RNS.LOG_DEBUG)
                     self.channel_busy = False
 
     def is_channel_clear(self):
@@ -747,8 +744,7 @@ class FreeDVInterface(Interface):
             rx_buffer_busy = self.rx_audio_buffer.nbuffer > (self.audio_frames_per_buffer * 10)
 
             if rx_buffer_busy and self.debug:
-                RNS.log(f"FreeDV [{self.name}] channel busy - RX buffer has {self.rx_audio_buffer.nbuffer} samples",
-                        RNS.LOG_DEBUG)
+                RNS.log(f"{self} channel busy - RX buffer has {self.rx_audio_buffer.nbuffer} samples", RNS.LOG_DEBUG)
 
             return not self.channel_busy and not rx_buffer_busy
 
@@ -759,11 +755,11 @@ class FreeDVInterface(Interface):
         # check if channel is already clear
         if self.is_channel_clear():
             if self.debug:
-                RNS.log(f"FreeDV [{self.name}] channel clear, transmitting", RNS.LOG_DEBUG)
+                RNS.log(f"{self} channel clear, transmitting", RNS.LOG_DEBUG)
             return True
 
         # Channel is busy, wait for it to clear
-        RNS.log(f"FreeDV [{self.name}] channel busy, waiting...", RNS.LOG_DEBUG)
+        RNS.log(f"{self} channel busy, waiting...", RNS.LOG_DEBUG)
         wait_start = time.time()
         last_log = wait_start
 
@@ -773,7 +769,7 @@ class FreeDVInterface(Interface):
             # log every 5 seconds while waiting
             if time.time() - last_log > 5.0:
                 wait_time = time.time() - wait_start
-                RNS.log(f"FreeDV [{self.name}] still waiting for clear channel ({wait_time:.1f}s)", RNS.LOG_DEBUG)
+                RNS.log(f"{self} still waiting for clear channel ({wait_time:.1f}s)", RNS.LOG_DEBUG)
                 last_log = time.time()
 
         time.sleep(self.csma_wait_time)
@@ -784,7 +780,7 @@ class FreeDVInterface(Interface):
 
         total_wait = time.time() - wait_start
         if total_wait > 0.5:
-            RNS.log(f"channel clear after {total_wait:.1f}s, transmitting", RNS.LOG_DEBUG)
+            RNS.log(f"{self} channel clear after {total_wait:.1f}s, transmitting", RNS.LOG_DEBUG)
 
         return True
 
@@ -798,14 +794,12 @@ class FreeDVInterface(Interface):
 
                 max_payload = self.freedv.payload_bytes_per_modem_frame
                 if len(packet) > max_payload:
-                    RNS.log(f"FreeDV [{self.name}] packet too large: {len(packet)} > {max_payload}",
-                            RNS.LOG_ERROR)
+                    RNS.log(f"{self} packet too large: {len(packet)} > {max_payload}", RNS.LOG_ERROR)
                     self.is_transmitting = False
                     continue
 
                 if self.debug:
-                    RNS.log(f"FreeDV [{self.name}] TX: {len(packet)} bytes",
-                            RNS.LOG_DEBUG)
+                    RNS.log(f"{self} TX: {len(packet)} bytes", RNS.LOG_DEBUG)
 
                 self.ptt_on()
 
@@ -859,13 +853,13 @@ class FreeDVInterface(Interface):
                 self.is_transmitting = False
 
                 if self.debug:
-                    RNS.log(f"FreeDV [{self.name}] transmission complete", RNS.LOG_DEBUG)
+                    RNS.log(f"{self} transmission complete", RNS.LOG_DEBUG)
 
             except queue.Empty:
                 continue
             except Exception as e:
                 self.is_transmitting = False
-                RNS.log(f"TX error in FreeDV interface [{self.name}]: {e}", RNS.LOG_ERROR)
+                RNS.log(f"{self} TX error: {e}", RNS.LOG_ERROR)
                 import traceback
                 RNS.log(traceback.format_exc(), RNS.LOG_ERROR)
 
@@ -940,12 +934,12 @@ class FreeDVInterface(Interface):
                             self._process_rx_frame(nbytes_out, rx_bytes)
 
             except Exception as e:
-                RNS.log(f"RX error in FreeDV interface [{self.name}]: {e}", RNS.LOG_ERROR)
+                RNS.log(f"{self} RX error: {e}", RNS.LOG_ERROR)
 
     def _process_rx_frame(self, nbytes_out, rx_bytes):
         """Process a received FreeDV frame"""
         if self.debug:
-            RNS.log(f"FreeDV [{self.name}] raw RX: {nbytes_out} bytes", RNS.LOG_DEBUG)
+            RNS.log(f"{self} raw RX: {nbytes_out} bytes", RNS.LOG_DEBUG)
 
         # For FreeDV, we get the full frame including CRC
         # The CRC is the last 2 bytes. but FreeDV already validates it
@@ -963,18 +957,16 @@ class FreeDVInterface(Interface):
                 packet = payload[:actual_length]
                 self.process_incoming(bytes(packet))
                 if self.debug:
-                    RNS.log(f"FreeDV [{self.name}] processed {len(packet)} byte packet",
-                            RNS.LOG_DEBUG)
+                    RNS.log(f"{self} processed {len(packet)} byte packet", RNS.LOG_DEBUG)
             elif self.debug:
-                RNS.log(f"FreeDV [{self.name}] received empty/padding-only frame",
-                        RNS.LOG_DEBUG)
+                RNS.log(f"{self} received empty/padding-only frame", RNS.LOG_DEBUG)
         elif self.debug:
-            RNS.log(f"FreeDV [{self.name}] received short frame", RNS.LOG_DEBUG)
+            RNS.log(f"{self} received short frame", RNS.LOG_DEBUG)
 
     def process_incoming(self, data):
         self.rxb += len(data)
         if self.debug:
-            RNS.log(f"FreeDV [{self.name}] received {len(data)} byte packet (total: {self.rxb} bytes)", RNS.LOG_DEBUG)
+            RNS.log(f"{self} received {len(data)} byte packet (total: {self.rxb} bytes)", RNS.LOG_DEBUG)
         self.owner.inbound(data, self)
 
     def process_outgoing(self, data):
@@ -982,7 +974,7 @@ class FreeDVInterface(Interface):
             max_payload = self.freedv.payload_bytes_per_modem_frame
 
             if len(data) > max_payload:
-                RNS.log(f"FreeDV interface [{self.name}] dropping outbound packet: {len(data)} > {max_payload} bytes", RNS.LOG_ERROR)
+                RNS.log(f"{self} dropping outbound packet: {len(data)} > {max_payload} bytes", RNS.LOG_ERROR)
                 return
 
             try:
@@ -991,14 +983,15 @@ class FreeDVInterface(Interface):
                 self.txb += len(data)
 
                 if self.csma_enabled and self.channel_busy and self.debug:
-                    RNS.log(
-                        f"FreeDV [{self.name}] queued packet #{self.tx_queue.qsize()}, will send when channel is clear",
-                        RNS.LOG_DEBUG)
+                    RNS.log(f"{self} queued packet #{self.tx_queue.qsize()}, will send when channel is clear", RNS.LOG_DEBUG)
             except queue.Full:
-                RNS.log(f"TX queue full on FreeDV interface [{self.name}]", RNS.LOG_WARNING)
+                RNS.log(f"{self} TX queue full", RNS.LOG_WARNING)
 
     def should_ingress_limit(self):
         return False
+
+    def __str__(self):
+        return f"FreeDVInterface[{self.name}]"
 
     def get_hash(self):
         import hashlib
@@ -1036,7 +1029,7 @@ class FreeDVInterface(Interface):
             self.ptt_serial.close()
 
         if self.debug:
-            RNS.log(f"FreeDV Interface [{self.name}] closed", RNS.LOG_DEBUG)
+            RNS.log(f"{self} closed", RNS.LOG_DEBUG)
 
 
 # Register
