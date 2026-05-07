@@ -168,7 +168,7 @@ class FreeDVData:
 
         s_multiplier = 2
 
-        silence_samples = int((100 / 1000) * 8000) * s_multiplier
+        silence_samples = int((100 / 1000) * self.modem_sample_rate) * s_multiplier
         txbuffer += bytes(silence_samples)
 
         # extra_silence = self.c_lib.freedv_get_n_nom_modem_samples(self.freedv) * 2 * 2
@@ -220,10 +220,16 @@ class AudioBuffer:
     def push(self, samples):
         self.mutex.acquire()
         try:
+            if len(samples) >= self.size:
+                self.buffer[:] = samples[-self.size:]
+                self.nbuffer = self.size
+                return
+
             space_available = self.size - self.nbuffer
             if len(samples) > space_available:
                 samples_to_drop = len(samples) - space_available
-                self.buffer[:-samples_to_drop] = self.buffer[samples_to_drop:]
+                samples_to_drop = min(samples_to_drop, self.nbuffer)
+                self.buffer[:self.nbuffer - samples_to_drop] = self.buffer[samples_to_drop:self.nbuffer]
                 self.nbuffer -= samples_to_drop
 
             self.buffer[self.nbuffer: self.nbuffer + len(samples)] = samples
@@ -355,7 +361,6 @@ class FreeDVInterface(Interface):
         self.csma_wait_time = float(ifconf.get("csma_wait_time", "2.0"))  # wait time after channel busy
         self.channel_busy_timeout = float(
             ifconf.get("channel_busy_timeout", "0.5"))  # time after last activity before channel is clear
-        self.signal_threshold = float(ifconf.get("signal_threshold", "0.1"))  # audio level threshold
 
         self.tx_queue = queue.Queue(maxsize=100)
         self.rx_queue = queue.Queue()
