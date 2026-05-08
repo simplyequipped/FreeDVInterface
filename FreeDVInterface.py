@@ -883,6 +883,8 @@ class FreeDVInterface(Interface):
                             RNS.log(f"{self} modem reporting SNR {snr_value:.1f} dB, signal {signal_level:.3f}, sync state {sync_state}", RNS.LOG_EXTREME)
 
                         if nbytes_out > 0:
+                            if self.debug:
+                                RNS.log(f"{self} raw RX: {nbytes_out} bytes (SNR {snr_value:.1f} dB)", RNS.LOG_DEBUG)
                             self._process_rx_frame(nbytes_out, rx_bytes)
                     else:
                         # no samples available, sleep a bit and update channel state
@@ -940,6 +942,8 @@ class FreeDVInterface(Interface):
                             RNS.log(f"{self} modem reporting SNR {snr_value:.1f} dB, signal {signal_level:.3f}, sync state {sync_state}", RNS.LOG_EXTREME)
 
                         if nbytes_out > 0:
+                            if self.debug:
+                                RNS.log(f"{self} raw RX: {nbytes_out} bytes (SNR {snr_value:.1f} dB)", RNS.LOG_DEBUG)
                             self._process_rx_frame(nbytes_out, rx_bytes)
 
             except Exception as e:
@@ -947,9 +951,6 @@ class FreeDVInterface(Interface):
 
     def _process_rx_frame(self, nbytes_out, rx_bytes):
         """Process a received FreeDV frame"""
-        if self.debug:
-            RNS.log(f"{self} raw RX: {nbytes_out} bytes", RNS.LOG_DEBUG)
-
         # For FreeDV, we get the full frame including CRC
         # The CRC is the last 2 bytes. but FreeDV already validates it
         # If were here, the CRC was good, so we can use the payload
